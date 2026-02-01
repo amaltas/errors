@@ -62,6 +62,46 @@ That's the specific capability this library adds:
 
 These three features work together. An error can carry a sentinel identity *and* a typed payload *and* multiple layers of human-readable context, all at the same time. Any layer in the stack can inspect any of these without knowing what the other layers added.
 
+## Cutting the boilerplate
+
+The most common complaint about value-based error handling in C++ is the ceremony. Every call site needs a temporary, an `if` check, and a return. Three lines, repeated everywhere. Multiply by a hundred call sites and it dominates the code.
+
+The library ships three macros that collapse the pattern to a single line.
+
+**Propagate an error without a value:**
+
+```cpp
+errors::Error Initialize() {
+    ERRORS_RETURN_IF_ERROR(LoadConfig());
+    ERRORS_RETURN_IF_ERROR(ConnectDatabase());
+    ERRORS_RETURN_IF_ERROR(StartServer());
+    return {};
+}
+```
+
+**Unwrap a `Result<T>` or return the error:**
+
+```cpp
+errors::Result<Config> LoadAndValidate() {
+    ERRORS_ASSIGN_OR_RETURN(auto data, ReadFile("config.yaml"));
+    ERRORS_ASSIGN_OR_RETURN(auto cfg, Parse(data));
+    return cfg;
+}
+```
+
+**Unwrap inline in an expression (GCC/Clang):**
+
+```cpp
+errors::Result<std::string> BuildGreeting() {
+    auto name = ERRORS_TRY(LookupName(user_id));
+    return "Hello, " + name;
+}
+```
+
+`ERRORS_TRY` uses a GCC statement expression -- non-standard, but supported by both GCC and Clang. `ERRORS_ASSIGN_OR_RETURN` works everywhere.
+
+For functions that can fail but have no value to return, there's `Result<void>` -- 8 bytes, same size as a bare `Error`. Default construction is success; construction from `Error` is failure. No `bool` flag needed -- the nil state of the Error *is* the success state.
+
 ## What's under the hood
 
 The `Error` type is **8 bytes** -- a tagged `uintptr_t`:
@@ -78,7 +118,7 @@ Payloads use a `DetailedError<T>` template that stores the typed payload inline.
 
 ## The benchmarks
 
-Also includes a comprehensive benchmark suite (61 measurements) comparing against `std::expected`, `std::error_code`, raw integers, and `throw`/`catch` with `std::runtime_error`.
+Also includes a comprehensive benchmark suite (69 measurements) comparing against `std::expected`, `std::error_code`, raw integers, and `throw`/`catch` with `std::runtime_error`.
 
 All numbers are median CPU nanoseconds, Release build, Clang 20, `-O2`.
 
@@ -128,6 +168,16 @@ Sentinel errors -- the ones you'd use for well-known conditions -- cost **4 ns**
 
 Checking for success is a single integer compare-to-zero. The 1.5 ns includes non-inlined function call overhead; with LTO this would be indistinguishable from a raw comparison.
 
+**Macro overhead (through `noinline` functions):**
+
+| Macro | Success (ns) | Failure (ns) |
+|---|--:|--:|
+| `ERRORS_RETURN_IF_ERROR` | 6 | 36 |
+| `ERRORS_ASSIGN_OR_RETURN` | 3 | 47 |
+| `ERRORS_TRY` | 4 | 47 |
+
+On the success path, the macros add single-digit nanoseconds of overhead. The failure path cost is dominated by `errors::New()` (heap allocation), not the macro itself. The macros are syntactic sugar -- they generate the same code you'd write by hand.
+
 ## What this adds up to
 
 Here's where the different C++ error mechanisms stand on the capabilities that matter for production debugging:
@@ -140,6 +190,7 @@ Here's where the different C++ error mechanisms stand on the capabilities that m
 | Uniform type | Yes | No (`E` varies) | No | **Yes** |
 | Zero-cost sentinels | Predefined codes | N/A | No | **Yes (4 ns)** |
 | User-defined error kinds | Via categories | N/A | Subclassing | **Unlimited sentinels** |
+| Propagation macros | No | No | N/A (implicit) | **3 macros** |
 
 The cost is `expected`-tier. The capability set is new to C++.
 
@@ -159,6 +210,16 @@ errors::WrapWithPayload(err, "msg", payload)    // wrap + attach payload
 ERRORS_DEFINE_SENTINEL(kName, "message")        // define sentinel constant
 err.message()                                   // full chain as string
 if (err) { ... }                                // nil check
+
+// Result<T> and Result<void>
+errors::Result<int> r = 42;                     // success
+errors::Result<int> r = errors::New("fail");    // failure
+errors::Result<void> r;                         // void success (8 bytes)
+
+// Propagation macros
+ERRORS_RETURN_IF_ERROR(expr)                    // return Error if non-nil
+ERRORS_ASSIGN_OR_RETURN(auto val, expr)         // unwrap Result<T> or return
+ERRORS_TRY(expr)                                // unwrap inline (GCC/Clang)
 ```
 
 If you've used Go's error handling, you already know this API. If you haven't, it takes about five minutes to learn.
