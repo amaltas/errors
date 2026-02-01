@@ -857,6 +857,134 @@ void BM_Wrap_Heap(benchmark::State& state) {
 }
 BENCHMARK(BM_Wrap_Heap);
 
+//------------------------------------------------------------------------
+// L. Result<void> benchmarks
+//------------------------------------------------------------------------
+
+void BM_Result_VoidSuccess(benchmark::State& state) {
+  for (auto _ : state) {  // NOLINT
+    errors::Result<void> r;
+    benchmark::DoNotOptimize(r);
+  }
+}
+BENCHMARK(BM_Result_VoidSuccess);
+
+void BM_Result_VoidFailure(benchmark::State& state) {
+  for (auto _ : state) {  // NOLINT
+    errors::Result<void> r{errors::New("failure")};
+    benchmark::DoNotOptimize(r);
+  }
+}
+BENCHMARK(BM_Result_VoidFailure);
+
+//------------------------------------------------------------------------
+// M. Macro benchmarks
+//------------------------------------------------------------------------
+
+[[gnu::noinline]] auto BenchSucceedingError() -> errors::Error {
+  return errors::Error();
+}
+
+[[gnu::noinline]] auto BenchFailingError() -> errors::Error {
+  return errors::New("macro error");
+}
+
+[[gnu::noinline]] auto BenchSucceedingResult() -> errors::Result<int> {
+  return 42;
+}
+
+[[gnu::noinline]] auto BenchFailingResult() -> errors::Result<int> {
+  return errors::New("result error");
+}
+
+// M.1: ERRORS_RETURN_IF_ERROR
+
+[[gnu::noinline]] auto MacroReturnIfError_Success() -> errors::Error {
+  ERRORS_RETURN_IF_ERROR(BenchSucceedingError());
+  return errors::Error();
+}
+
+[[gnu::noinline]] auto MacroReturnIfError_Failure() -> errors::Error {
+  ERRORS_RETURN_IF_ERROR(BenchFailingError());
+  return errors::Error();
+}
+
+void BM_Macro_ReturnIfError_Success(benchmark::State& state) {
+  for (auto _ : state) {  // NOLINT
+    auto err = MacroReturnIfError_Success();
+    benchmark::DoNotOptimize(err);
+  }
+}
+BENCHMARK(BM_Macro_ReturnIfError_Success);
+
+void BM_Macro_ReturnIfError_Failure(benchmark::State& state) {
+  for (auto _ : state) {  // NOLINT
+    auto err = MacroReturnIfError_Failure();
+    benchmark::DoNotOptimize(err);
+  }
+}
+BENCHMARK(BM_Macro_ReturnIfError_Failure);
+
+// M.2: ERRORS_ASSIGN_OR_RETURN
+
+[[gnu::noinline]] auto MacroAssignOrReturn_Success() -> errors::Result<int> {
+  ERRORS_ASSIGN_OR_RETURN(auto val, BenchSucceedingResult());
+  return val;
+}
+
+[[gnu::noinline]] auto MacroAssignOrReturn_Failure() -> errors::Result<int> {
+  ERRORS_ASSIGN_OR_RETURN(auto val, BenchFailingResult());
+  return val;
+}
+
+void BM_Macro_AssignOrReturn_Success(benchmark::State& state) {
+  for (auto _ : state) {  // NOLINT
+    auto r = MacroAssignOrReturn_Success();
+    benchmark::DoNotOptimize(r);
+  }
+}
+BENCHMARK(BM_Macro_AssignOrReturn_Success);
+
+void BM_Macro_AssignOrReturn_Failure(benchmark::State& state) {
+  for (auto _ : state) {  // NOLINT
+    auto r = MacroAssignOrReturn_Failure();
+    benchmark::DoNotOptimize(r);
+  }
+}
+BENCHMARK(BM_Macro_AssignOrReturn_Failure);
+
+// M.3: ERRORS_TRY (GCC/Clang only)
+
+#if defined(__GNUC__)
+
+[[gnu::noinline]] auto MacroTry_Success() -> errors::Result<int> {
+  int val = ERRORS_TRY(BenchSucceedingResult());
+  return val;
+}
+
+[[gnu::noinline]] auto MacroTry_Failure() -> errors::Result<int> {
+  int val = ERRORS_TRY(BenchFailingResult());
+  return val;
+}
+
+void BM_Macro_Try_Success(benchmark::State& state) {
+  for (auto _ : state) {  // NOLINT
+    auto r = MacroTry_Success();
+    benchmark::DoNotOptimize(r);
+  }
+}
+BENCHMARK(BM_Macro_Try_Success);
+
+void BM_Macro_Try_Failure(benchmark::State& state) {
+  for (auto _ : state) {  // NOLINT
+    auto r = MacroTry_Failure();
+    benchmark::DoNotOptimize(r);
+  }
+}
+BENCHMARK(BM_Macro_Try_Failure);
+
+#endif  // defined(__GNUC__)
+
 }  // namespace
 
 // Run the benchmark
