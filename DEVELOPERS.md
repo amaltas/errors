@@ -297,6 +297,92 @@ without modifying the core `Is()` implementation.
 
 No changes to `CMakeLists.txt` are needed since `result.h` is header-only.
 
+### Result\<void\> specialization
+
+`Result<void>` is a partial specialization that holds no value -- just
+success or failure. It stores a single `Error` member (no `bool has_value_`
+needed). Nil `Error` *is* the success state. Total size: **8 bytes**, same as
+a bare `Error`.
+
+The constructor from `Error` is implicit (not explicit) so that functions can
+`return err;` naturally. An `assert` checks that the `Error` is non-nil on
+the failure path.
+
+There is no `value()` method. The `error()` accessors assert on success (nil
+error), matching the behavior of `Result<T>::error()` asserting on the success
+state.
+
+## Error propagation macros
+
+Three macros in `error.h` and `result.h` reduce error-propagation boilerplate.
+
+### `ERRORS_RETURN_IF_ERROR(expr)` (in `error.h`)
+
+```cpp
+#define ERRORS_RETURN_IF_ERROR(expr) \
+  do {                               \
+    if (auto _err_ = (expr); _err_) {\
+      return _err_;                  \
+    }                                \
+  } while (false)
+```
+
+Design notes:
+
+- `expr` must evaluate to an `Error`. The macro checks `operator bool` (true =
+  non-nil = error) and returns it.
+- The `do { ... } while (false)` idiom scopes the variable and ensures the
+  macro behaves as a single statement (safe after `if` without braces).
+- The enclosing function can return `Error` or `Result<void>` (since
+  `Result<void>` is implicitly constructible from `Error`).
+- **Do not pass `Result<void>` expressions** to this macro. `Result<void>`
+  has the opposite bool semantics (`true` = success), so the early-return
+  condition would be inverted.
+
+### `ERRORS_ASSIGN_OR_RETURN(lhs, expr)` (in `result.h`)
+
+```cpp
+#define ERRORS_ASSIGN_OR_RETURN(lhs, expr)                                    \
+  auto ERRORS_CONCAT_INNER_(errors_result_, __LINE__) = (expr);               \
+  if (!ERRORS_CONCAT_INNER_(errors_result_, __LINE__).ok())                   \
+    return std::move(ERRORS_CONCAT_INNER_(errors_result_, __LINE__)).error();  \
+  lhs = std::move(ERRORS_CONCAT_INNER_(errors_result_, __LINE__)).value()
+```
+
+Design notes:
+
+- The temporary variable uses `__LINE__` to generate a unique name, preventing
+  collisions when the macro is used multiple times in the same scope.
+- The temporary **leaks into the enclosing scope** (it is not wrapped in a
+  `do/while` because `lhs` may be a declaration like `auto val`). This is the
+  same trade-off made by absl's `ASSIGN_OR_RETURN`.
+- `lhs` can be `auto val`, `auto& val`, or an existing variable.
+- Single evaluation of `expr`.
+- **Cannot be used twice on the same line.** The `__LINE__`-based name would
+  collide. In practice this is rarely an issue.
+
+### `ERRORS_TRY(expr)` (in `result.h`, GCC/Clang only)
+
+```cpp
+#define ERRORS_TRY(expr)                                                 \
+  ({                                                                     \
+    auto&& _result_ = (expr);                                            \
+    if (!_result_.ok()) return std::move(_result_).error();              \
+    std::move(_result_).value();                                         \
+  })
+```
+
+Design notes:
+
+- Uses a **GCC statement expression** (`({ ... })`), which is a compiler
+  extension supported by both GCC and Clang. Guarded behind
+  `#if defined(__GNUC__)`. Not available on MSVC.
+- The statement expression evaluates to the unwrapped value, so the macro can
+  be used inline in expressions: `auto x = ERRORS_TRY(Foo()) + 1;`
+- Uses `auto&&` to bind the result by reference, avoiding a copy.
+- The `_result_` name is not `__LINE__`-suffixed because the statement
+  expression creates its own scope. Multiple uses on the same line are safe.
+
 ## Build
 
 ```bash
@@ -348,6 +434,10 @@ Tests use Google Test (fetched via CMake `FetchContent`). The test file covers:
 | `SerializationTest.SerializeDeserialize_*` (5 tests) | Round-trip: nil, simple, with payload (reconstructed via `ParseFromString`), chain, multi-layer payloads |
 | `SerializationTest.Deserialize_*` (2 tests) | Empty and truncated input handled gracefully |
 | `SerializationTest.RoundTrip_DebugStringPreserved` | `DebugString` works on deserialized errors (payload shows as `SerializedPayload`) |
+| `ResultVoidTest.*` (9 tests) | Default construction is success, construction from Error is failure, `ok()`/`operator bool`, error access (const/mutable/move), move and copy semantics, sentinel identity, `sizeof == 8` |
+| `MacroReturnIfErrorTest.*` (4 tests) | Success path (Error-returning and Result\<void\>-returning callers), failure path from Error-returning function |
+| `MacroAssignOrReturnTest.*` (4 tests) | Success path (assigns value), failure path (returns error), existing variable, sentinel identity preserved through return |
+| `MacroTryTest.*` (3 tests, GCC/Clang) | Success path (evaluates to value), failure path (returns error), inline usage in expressions |
 
 A `static_assert(sizeof(errors::Error) == 8)` at the top of the test file
 locks in the 8-byte representation. If the layout changes, the build fails
@@ -404,6 +494,20 @@ immediately.
   copy constructor. A `static_assert` in `DetailedError<T>::clone()` will
   fire at compile time if `T` is not copy-constructible, providing a clear
   diagnostic.
+- **`ERRORS_RETURN_IF_ERROR` only accepts `Error` expressions.** Do not pass
+  a `Result<void>` to it. `Error::operator bool` returns `true` for non-nil
+  (error), while `Result<void>::operator bool` returns `true` for success.
+  Passing a `Result<void>` would invert the early-return condition.
+- **`ERRORS_ASSIGN_OR_RETURN` cannot be used twice on the same line.** The
+  `__LINE__`-based unique variable name would collide. This is a known
+  limitation of the technique (shared with absl's `ASSIGN_OR_RETURN`).
+- **`ERRORS_ASSIGN_OR_RETURN` leaks a temporary into the enclosing scope.**
+  The generated variable (`errors_result_<LINE>`) is visible after the macro.
+  Avoid naming your own variables with the `errors_result_` prefix.
+- **`ERRORS_TRY` is not portable.** It uses GCC statement expressions, which
+  are not part of the C++ standard. It is only available under `__GNUC__`
+  (GCC and Clang). Code that must compile on MSVC should use
+  `ERRORS_ASSIGN_OR_RETURN` instead.
 
 ## Why not...
 
