@@ -314,7 +314,7 @@ state.
 
 ## Error propagation macros
 
-Three macros in `error.h` and `result.h` reduce error-propagation boilerplate.
+Five macros in `error.h` and `result.h` reduce error-propagation boilerplate.
 
 ### `ERRORS_RETURN_IF_ERROR(expr)` (in `error.h`)
 
@@ -339,6 +339,28 @@ Design notes:
   has the opposite bool semantics (`true` = success), so the early-return
   condition would be inverted.
 
+### `ERRORS_RETURN_IF_ERROR_WRAPF(expr, ...)` (in `error.h`)
+
+```cpp
+#define ERRORS_RETURN_IF_ERROR_WRAPF(expr, ...)            \
+  do {                                                      \
+    if (auto _err_ = (expr); _err_) {                      \
+      return errors::Wrapf(std::move(_err_), __VA_ARGS__); \
+    }                                                       \
+  } while (false)
+```
+
+Design notes:
+
+- Same structure as `ERRORS_RETURN_IF_ERROR`, but wraps the error with
+  `errors::Wrapf` before returning. The variadic arguments are forwarded
+  directly to `Wrapf` (format string + args).
+- This exists because the naive composition
+  `ERRORS_RETURN_IF_ERROR(errors::Wrap(expr, "msg"))` is a bug: `Wrap` is
+  called unconditionally, so a nil (success) error gets wrapped into a
+  non-nil error. The `_WRAPF` variant only wraps when the error is non-nil.
+- Uses `std::move` on the error to avoid a refcount bump before wrapping.
+
 ### `ERRORS_ASSIGN_OR_RETURN(lhs, expr)` (in `result.h`)
 
 ```cpp
@@ -360,6 +382,28 @@ Design notes:
 - Single evaluation of `expr`.
 - **Cannot be used twice on the same line.** The `__LINE__`-based name would
   collide. In practice this is rarely an issue.
+
+### `ERRORS_ASSIGN_OR_RETURN_WRAPF(lhs, expr, ...)` (in `result.h`)
+
+```cpp
+#define ERRORS_ASSIGN_OR_RETURN_WRAPF(lhs, expr, ...)                         \
+  auto ERRORS_CONCAT_INNER_(errors_result_, __LINE__) = (expr);               \
+  if (!ERRORS_CONCAT_INNER_(errors_result_, __LINE__).ok())                   \
+    return errors::Wrapf(                                                     \
+        std::move(ERRORS_CONCAT_INNER_(errors_result_, __LINE__)).error(),    \
+        __VA_ARGS__);                                                         \
+  lhs = std::move(ERRORS_CONCAT_INNER_(errors_result_, __LINE__)).value()
+```
+
+Design notes:
+
+- Same structure as `ERRORS_ASSIGN_OR_RETURN`, but wraps the error via
+  `Wrapf` before returning on the failure path. The variadic arguments after
+  `expr` are forwarded to `Wrapf` (format string + args).
+- Same `__LINE__`-based unique naming and scope-leaking trade-offs as the
+  non-wrapping variant.
+- The error is moved out of the `Result` via the rvalue `error()` accessor
+  before passing to `Wrapf`, avoiding a refcount bump.
 
 ### `ERRORS_TRY(expr)` (in `result.h`, GCC/Clang only)
 
@@ -438,6 +482,8 @@ Tests use Google Test (fetched via CMake `FetchContent`). The test file covers:
 | `MacroReturnIfErrorTest.*` (4 tests) | Success path (Error-returning and Result\<void\>-returning callers), failure path from Error-returning function |
 | `MacroAssignOrReturnTest.*` (4 tests) | Success path (assigns value), failure path (returns error), existing variable, sentinel identity preserved through return |
 | `MacroTryTest.*` (3 tests, GCC/Clang) | Success path (evaluates to value), failure path (returns error), inline usage in expressions |
+| `MacroReturnIfErrorWrapfTest.*` (3 tests) | Success path (no wrapping), failure path (wraps with formatted context), works with `Result<void>` return |
+| `MacroAssignOrReturnWrapfTest.*` (3 tests) | Success path (assigns value), failure path (wraps error with formatted context), existing variable |
 
 A `static_assert(sizeof(errors::Error) == 8)` at the top of the test file
 locks in the 8-byte representation. If the layout changes, the build fails

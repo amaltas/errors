@@ -206,6 +206,17 @@ class [[nodiscard]] Result<void> {
     return std::move(ERRORS_CONCAT_INNER_(errors_result_, __LINE__)).error();  \
   lhs = std::move(ERRORS_CONCAT_INNER_(errors_result_, __LINE__)).value()
 
+// Macro: ERRORS_ASSIGN_OR_RETURN_WRAPF(lhs, expr, fmt, ...)
+// Like ERRORS_ASSIGN_OR_RETURN, but wraps the error with a formatted message
+// via errors::Wrapf before returning on failure.
+#define ERRORS_ASSIGN_OR_RETURN_WRAPF(lhs, expr, ...)                         \
+  auto ERRORS_CONCAT_INNER_(errors_result_, __LINE__) = (expr);               \
+  if (!ERRORS_CONCAT_INNER_(errors_result_, __LINE__).ok())                   \
+    return errors::Wrapf(                                                     \
+        std::move(ERRORS_CONCAT_INNER_(errors_result_, __LINE__)).error(),    \
+        __VA_ARGS__);                                                         \
+  lhs = std::move(ERRORS_CONCAT_INNER_(errors_result_, __LINE__)).value()
+
 // Macro: ERRORS_TRY(expr)  (GCC/Clang only — statement expression)
 // Evaluates `expr` (must yield a Result<T>). On success, evaluates to the
 // unwrapped value; on failure, returns the error from the enclosing function.

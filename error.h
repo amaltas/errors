@@ -287,6 +287,18 @@ template <typename T>
     }                                \
   } while (false)
 
+// Macro: ERRORS_RETURN_IF_ERROR_WRAPF(expr, fmt, ...)
+// Evaluates `expr` (must yield an Error). If non-nil, wraps the error with a
+// formatted message via errors::Wrapf and returns it from the enclosing
+// function. This avoids the common bug of composing Wrap inside the plain
+// macro, which would wrap nil errors into non-nil ones.
+#define ERRORS_RETURN_IF_ERROR_WRAPF(expr, ...)            \
+  do {                                                      \
+    if (auto _err_ = (expr); _err_) {                      \
+      return errors::Wrapf(std::move(_err_), __VA_ARGS__); \
+    }                                                       \
+  } while (false)
+
 template <>
 struct std::formatter<errors::Error> {
   static constexpr auto parse(std::format_parse_context& ctx) {

@@ -66,7 +66,7 @@ These three features work together. An error can carry a sentinel identity *and*
 
 The most common complaint about value-based error handling in C++ is the ceremony. Every call site needs a temporary, an `if` check, and a return. Three lines, repeated everywhere. Multiply by a hundred call sites and it dominates the code.
 
-The library ships three macros that collapse the pattern to a single line.
+The library ships five macros that collapse the pattern to a single line.
 
 **Propagate an error without a value:**
 
@@ -97,6 +97,25 @@ errors::Result<std::string> BuildGreeting() {
     return "Hello, " + name;
 }
 ```
+
+**Propagate with wrapping context (the safe way):**
+
+```cpp
+errors::Error LoadProfile(int64_t user_id) {
+    ERRORS_RETURN_IF_ERROR_WRAPF(repo_.FindById(user_id),
+                                 "loading profile for user {}", user_id);
+    return {};
+}
+
+errors::Result<Config> LoadAndValidate(std::string_view path) {
+    ERRORS_ASSIGN_OR_RETURN_WRAPF(auto data, ReadFile(path),
+                                  "reading config from {}", path);
+    ERRORS_ASSIGN_OR_RETURN_WRAPF(auto cfg, Parse(data), "parsing config");
+    return cfg;
+}
+```
+
+The `_WRAPF` variants wrap the error with `Wrapf` before returning. This avoids a subtle bug with the naive composition `ERRORS_RETURN_IF_ERROR(errors::Wrap(expr, "msg"))` -- which calls `Wrap` unconditionally, turning a nil (success) error into a non-nil one.
 
 `ERRORS_TRY` uses a GCC statement expression -- non-standard, but supported by both GCC and Clang. `ERRORS_ASSIGN_OR_RETURN` works everywhere.
 
@@ -190,7 +209,7 @@ Here's where the different C++ error mechanisms stand on the capabilities that m
 | Uniform type | Yes | No (`E` varies) | No | **Yes** |
 | Zero-cost sentinels | Predefined codes | N/A | No | **Yes (4 ns)** |
 | User-defined error kinds | Via categories | N/A | Subclassing | **Unlimited sentinels** |
-| Propagation macros | No | No | N/A (implicit) | **3 macros** |
+| Propagation macros | No | No | N/A (implicit) | **5 macros** |
 
 The cost is `expected`-tier. The capability set is new to C++.
 
@@ -218,7 +237,9 @@ errors::Result<void> r;                         // void success (8 bytes)
 
 // Propagation macros
 ERRORS_RETURN_IF_ERROR(expr)                    // return Error if non-nil
+ERRORS_RETURN_IF_ERROR_WRAPF(expr, fmt, ...)    // wrap + return if non-nil
 ERRORS_ASSIGN_OR_RETURN(auto val, expr)         // unwrap Result<T> or return
+ERRORS_ASSIGN_OR_RETURN_WRAPF(val, expr, ...)   // unwrap or wrap + return
 ERRORS_TRY(expr)                                // unwrap inline (GCC/Clang)
 ```
 

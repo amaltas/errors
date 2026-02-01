@@ -467,7 +467,7 @@ There is no `value()` method.
 
 ### Error propagation macros
 
-Three macros reduce boilerplate when propagating errors up the call stack.
+Five macros reduce boilerplate when propagating errors up the call stack.
 
 #### `ERRORS_RETURN_IF_ERROR(expr)`
 
@@ -480,6 +480,23 @@ errors::Error DoMultipleSteps() {
     ERRORS_RETURN_IF_ERROR(Step1());
     ERRORS_RETURN_IF_ERROR(Step2());
     ERRORS_RETURN_IF_ERROR(Step3());
+    return {};
+}
+```
+
+Defined in `errors/error.h`.
+
+#### `ERRORS_RETURN_IF_ERROR_WRAPF(expr, fmt, ...)`
+
+Like `ERRORS_RETURN_IF_ERROR`, but wraps the error with a formatted message
+via `errors::Wrapf` before returning. This is the safe way to add context
+during propagation -- composing `Wrap` inside the plain macro would wrap nil
+errors into non-nil ones:
+
+```cpp
+errors::Error LoadProfile(int64_t user_id) {
+    ERRORS_RETURN_IF_ERROR_WRAPF(repo_.FindById(user_id),
+                                 "loading profile for user {}", user_id);
     return {};
 }
 ```
@@ -500,6 +517,22 @@ errors::Result<Config> LoadAndValidate() {
 ```
 
 `lhs` can be `auto val`, `auto& val`, or an existing variable name.
+Defined in `errors/result.h`.
+
+#### `ERRORS_ASSIGN_OR_RETURN_WRAPF(lhs, expr, fmt, ...)`
+
+Like `ERRORS_ASSIGN_OR_RETURN`, but wraps the error with a formatted message
+via `errors::Wrapf` before returning on failure:
+
+```cpp
+errors::Result<Config> LoadAndValidate(std::string_view path) {
+    ERRORS_ASSIGN_OR_RETURN_WRAPF(auto data, ReadFile(path),
+                                  "reading config from {}", path);
+    ERRORS_ASSIGN_OR_RETURN_WRAPF(auto cfg, Parse(data), "parsing config");
+    return cfg;
+}
+```
+
 Defined in `errors/result.h`.
 
 #### `ERRORS_TRY(expr)` (GCC/Clang only)
@@ -543,7 +576,9 @@ This is a GCC extension (supported by Clang) and is only available when
 | `std::formatter<errors::Error>` | `std::format` support -- formats as `err.message()`. |
 | `ERRORS_DEFINE_SENTINEL(name, msg)` | Define a named sentinel error constant. |
 | `ERRORS_RETURN_IF_ERROR(expr)` | Return early if `expr` yields a non-nil `Error`. |
+| `ERRORS_RETURN_IF_ERROR_WRAPF(expr, fmt, ...)` | Return early, wrapping the error with `Wrapf` context. |
 | `ERRORS_ASSIGN_OR_RETURN(lhs, expr)` | Unwrap a `Result<T>` or return the error. |
+| `ERRORS_ASSIGN_OR_RETURN_WRAPF(lhs, expr, fmt, ...)` | Unwrap a `Result<T>` or return the error wrapped with `Wrapf` context. |
 | `ERRORS_TRY(expr)` | (GCC/Clang) Unwrap a `Result<T>` inline or return the error. |
 
 ## Performance

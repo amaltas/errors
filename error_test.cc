@@ -887,6 +887,91 @@ TEST(MacroTryTest, InlineUsage) {
 #endif  // defined(__GNUC__)
 
 // ======================================================================
+// ERRORS_RETURN_IF_ERROR_WRAPF tests
+// ======================================================================
+
+namespace {
+
+auto CallReturnIfErrorWrapf_Success() -> errors::Error {
+  ERRORS_RETURN_IF_ERROR_WRAPF(SucceedingErrorFunc(), "wrapping {}",
+                               "context");
+  return errors::Error();
+}
+
+auto CallReturnIfErrorWrapf_Failure() -> errors::Error {
+  ERRORS_RETURN_IF_ERROR_WRAPF(FailingErrorFunc(), "op failed for user {}",
+                               42);
+  return errors::Error();  // Should not reach here.
+}
+
+auto CallReturnIfErrorWrapf_FailOnVoidResult() -> errors::Result<void> {
+  ERRORS_RETURN_IF_ERROR_WRAPF(FailingErrorFunc(), "void wrapper");
+  return {};  // Should not reach here.
+}
+
+}  // namespace
+
+TEST(MacroReturnIfErrorWrapfTest, SuccessPath) {
+  auto err = CallReturnIfErrorWrapf_Success();
+  EXPECT_FALSE(err);
+}
+
+TEST(MacroReturnIfErrorWrapfTest, FailureWrapsError) {
+  auto err = CallReturnIfErrorWrapf_Failure();
+  EXPECT_TRUE(err);
+  EXPECT_EQ(err.message(), "op failed for user 42: error func");
+}
+
+TEST(MacroReturnIfErrorWrapfTest, WorksWithResultVoid) {
+  auto result = CallReturnIfErrorWrapf_FailOnVoidResult();
+  EXPECT_FALSE(result.ok());
+  EXPECT_EQ(result.error().message(), "void wrapper: error func");
+}
+
+// ======================================================================
+// ERRORS_ASSIGN_OR_RETURN_WRAPF tests
+// ======================================================================
+
+namespace {
+
+auto CallAssignOrReturnWrapf_Success() -> errors::Result<int> {
+  ERRORS_ASSIGN_OR_RETURN_WRAPF(auto val, MakeIntResult(true), "wrap ctx");
+  return val;
+}
+
+auto CallAssignOrReturnWrapf_Failure() -> errors::Result<int> {
+  ERRORS_ASSIGN_OR_RETURN_WRAPF(auto val, MakeIntResult(false),
+                                "loading user {}", 99);
+  return val;  // Should not reach here.
+}
+
+auto CallAssignOrReturnWrapf_ExistingVar() -> errors::Result<int> {
+  int x = 0;
+  ERRORS_ASSIGN_OR_RETURN_WRAPF(x, MakeIntResult(true), "wrap");
+  return x;
+}
+
+}  // namespace
+
+TEST(MacroAssignOrReturnWrapfTest, SuccessPath) {
+  auto r = CallAssignOrReturnWrapf_Success();
+  EXPECT_TRUE(r.ok());
+  EXPECT_EQ(r.value(), 42);
+}
+
+TEST(MacroAssignOrReturnWrapfTest, FailureWrapsError) {
+  auto r = CallAssignOrReturnWrapf_Failure();
+  EXPECT_FALSE(r.ok());
+  EXPECT_EQ(r.error().message(), "loading user 99: int failed");
+}
+
+TEST(MacroAssignOrReturnWrapfTest, ExistingVariable) {
+  auto r = CallAssignOrReturnWrapf_ExistingVar();
+  EXPECT_TRUE(r.ok());
+  EXPECT_EQ(r.value(), 42);
+}
+
+// ======================================================================
 // Existing tests continue below
 // ======================================================================
 
