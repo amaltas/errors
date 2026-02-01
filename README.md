@@ -20,6 +20,8 @@ structured payloads.
   - [Inspecting individual layers](#inspecting-individual-layers)
   - [`std::format` support](#stdformat-support)
   - [`Result<T>`](#resultt)
+  - [`Result<void>`](#resultvoid)
+  - [Error propagation macros](#error-propagation-macros)
 - [API reference](#api-reference)
 - [Performance](#performance)
   - [Characteristics](#performance-characteristics)
@@ -441,6 +443,80 @@ if (result) {
 and `Error`, and provides `ok()`, `value()`, `error()`, `operator*`, and
 `operator->`. It is header-only and does not require linking.
 
+### `Result<void>`
+
+For functions that can fail but have no value to return, use `Result<void>`:
+
+```cpp
+errors::Result<void> SaveConfig(const Config& cfg) {
+    auto err = WriteFile(cfg.path(), cfg.Serialize());
+    if (err)
+        return err;
+    return {};  // success
+}
+
+auto result = SaveConfig(cfg);
+if (!result) {
+    std::cerr << result.error().message() << std::endl;
+}
+```
+
+`Result<void>` is 8 bytes -- the same size as a bare `Error`. Default
+construction is success (nil error); construction from an `Error` is failure.
+There is no `value()` method.
+
+### Error propagation macros
+
+Three macros reduce boilerplate when propagating errors up the call stack.
+
+#### `ERRORS_RETURN_IF_ERROR(expr)`
+
+Evaluates `expr` (which must return an `Error`). If the error is non-nil,
+returns it from the enclosing function. Works in functions returning `Error`
+or `Result<void>`:
+
+```cpp
+errors::Error DoMultipleSteps() {
+    ERRORS_RETURN_IF_ERROR(Step1());
+    ERRORS_RETURN_IF_ERROR(Step2());
+    ERRORS_RETURN_IF_ERROR(Step3());
+    return {};
+}
+```
+
+Defined in `errors/error.h`.
+
+#### `ERRORS_ASSIGN_OR_RETURN(lhs, expr)`
+
+Evaluates `expr` (which must return a `Result<T>`). On success, assigns the
+value to `lhs`; on failure, returns the error from the enclosing function:
+
+```cpp
+errors::Result<Config> LoadAndValidate() {
+    ERRORS_ASSIGN_OR_RETURN(auto data, ReadFile("config.yaml"));
+    ERRORS_ASSIGN_OR_RETURN(auto cfg, Parse(data));
+    return cfg;
+}
+```
+
+`lhs` can be `auto val`, `auto& val`, or an existing variable name.
+Defined in `errors/result.h`.
+
+#### `ERRORS_TRY(expr)` (GCC/Clang only)
+
+A statement-expression macro that evaluates to the unwrapped value on success,
+or returns the error on failure. Can be used inline in expressions:
+
+```cpp
+errors::Result<std::string> BuildGreeting() {
+    auto name = ERRORS_TRY(LookupName(user_id));
+    return "Hello, " + name;
+}
+```
+
+This is a GCC extension (supported by Clang) and is only available when
+`__GNUC__` is defined. Defined in `errors/result.h`.
+
 ## API reference
 
 | Function | Description |
@@ -462,9 +538,13 @@ and `Error`, and provides `ok()`, `value()`, `error()`, `operator*`, and
 | `Error::what()` | Returns the message for this single layer only. |
 | `Error::Unwrap()` | Returns a pointer to the next error in the chain, or `nullptr`. |
 | `Result<T>` | Discriminated union of `T` (success) or `Error` (failure). |
+| `Result<void>` | Success/failure without a value (8 bytes, nil Error = success). |
 | `SerializedPayload` | Container for deserialized payload data (type URL + bytes). |
 | `std::formatter<errors::Error>` | `std::format` support -- formats as `err.message()`. |
 | `ERRORS_DEFINE_SENTINEL(name, msg)` | Define a named sentinel error constant. |
+| `ERRORS_RETURN_IF_ERROR(expr)` | Return early if `expr` yields a non-nil `Error`. |
+| `ERRORS_ASSIGN_OR_RETURN(lhs, expr)` | Unwrap a `Result<T>` or return the error. |
+| `ERRORS_TRY(expr)` | (GCC/Clang) Unwrap a `Result<T>` inline or return the error. |
 
 ## Performance
 
