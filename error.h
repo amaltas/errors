@@ -276,6 +276,17 @@ template <typename T>
 
 }  // namespace errors
 
+// Macro: ERRORS_RETURN_IF_ERROR(expr)
+// Evaluates `expr` (must yield an Error or type convertible to bool).
+// If the result is non-nil, returns it immediately from the enclosing function.
+// Works for functions returning Error or Result<void>.
+#define ERRORS_RETURN_IF_ERROR(expr) \
+  do {                               \
+    if (auto _err_ = (expr); _err_) {\
+      return _err_;                  \
+    }                                \
+  } while (false)
+
 template <>
 struct std::formatter<errors::Error> {
   static constexpr auto parse(std::format_parse_context& ctx) {

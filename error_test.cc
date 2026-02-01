@@ -644,6 +644,252 @@ TEST(ErrorTest, FormatterNil) {
 
 // Fix 6: message() pre-allocation with deep chain.
 
+// ======================================================================
+// Result<void> tests
+// ======================================================================
+
+TEST(ResultVoidTest, DefaultConstructionIsSuccess) {
+  errors::Result<void> r;
+  EXPECT_TRUE(r.ok());
+  EXPECT_TRUE(static_cast<bool>(r));
+}
+
+TEST(ResultVoidTest, ConstructionFromErrorIsFailure) {
+  errors::Result<void> r = errors::New("something went wrong");
+  EXPECT_FALSE(r.ok());
+  EXPECT_FALSE(static_cast<bool>(r));
+  EXPECT_EQ(r.error().message(), "something went wrong");
+}
+
+TEST(ResultVoidTest, OkAndOperatorBool) {
+  errors::Result<void> success;
+  EXPECT_TRUE(success.ok());
+  EXPECT_TRUE(static_cast<bool>(success));
+
+  errors::Result<void> failure = errors::New("fail");
+  EXPECT_FALSE(failure.ok());
+  EXPECT_FALSE(static_cast<bool>(failure));
+}
+
+TEST(ResultVoidTest, ErrorAccessOnFailure) {
+  errors::Result<void> r = errors::New("detailed error");
+  EXPECT_EQ(r.error().message(), "detailed error");
+
+  // Mutable access.
+  auto& err_ref = r.error();
+  EXPECT_EQ(err_ref.message(), "detailed error");
+
+  // Move access.
+  errors::Error moved = std::move(r).error();
+  EXPECT_EQ(moved.message(), "detailed error");
+}
+
+TEST(ResultVoidTest, MoveSemantics) {
+  errors::Result<void> r = errors::New("moveable");
+  errors::Result<void> moved = std::move(r);
+  EXPECT_FALSE(moved.ok());
+  EXPECT_EQ(moved.error().message(), "moveable");
+}
+
+TEST(ResultVoidTest, CopySemantics) {
+  errors::Result<void> r = errors::New("copyable");
+  errors::Result<void> copy = r;
+  EXPECT_FALSE(copy.ok());
+  EXPECT_EQ(copy.error().message(), "copyable");
+  // Original unchanged.
+  EXPECT_FALSE(r.ok());
+  EXPECT_EQ(r.error().message(), "copyable");
+}
+
+TEST(ResultVoidTest, SuccessCopyAndMove) {
+  errors::Result<void> r;
+  errors::Result<void> copy = r;
+  EXPECT_TRUE(copy.ok());
+  errors::Result<void> moved = std::move(r);
+  EXPECT_TRUE(moved.ok());
+}
+
+TEST(ResultVoidTest, SentinelIdentity) {
+  errors::Result<void> r = errors::Error(kErrPermission);
+  EXPECT_FALSE(r.ok());
+  EXPECT_TRUE(errors::Is(r.error(), kErrPermission));
+}
+
+TEST(ResultVoidTest, SizeIs8Bytes) {
+  static_assert(sizeof(errors::Result<void>) == sizeof(errors::Error));
+}
+
+// ======================================================================
+// ERRORS_RETURN_IF_ERROR tests
+// ======================================================================
+
+namespace {
+
+auto SucceedingErrorFunc() -> errors::Error { return errors::Error(); }
+auto FailingErrorFunc() -> errors::Error { return errors::New("error func"); }
+
+// Enclosing function returns Error.
+auto CallReturnIfError_SuccessError() -> errors::Error {
+  ERRORS_RETURN_IF_ERROR(SucceedingErrorFunc());
+  return errors::Error();
+}
+
+auto CallReturnIfError_FailOnError() -> errors::Error {
+  ERRORS_RETURN_IF_ERROR(FailingErrorFunc());
+  return errors::Error();  // Should not reach here.
+}
+
+// Enclosing function returns Result<void> — macro works because
+// Result<void> is implicitly constructible from Error.
+auto CallReturnIfError_SuccessVoidResult() -> errors::Result<void> {
+  ERRORS_RETURN_IF_ERROR(SucceedingErrorFunc());
+  return {};
+}
+
+auto CallReturnIfError_FailOnVoidResult() -> errors::Result<void> {
+  ERRORS_RETURN_IF_ERROR(FailingErrorFunc());
+  return {};  // Should not reach here.
+}
+
+}  // namespace
+
+TEST(MacroReturnIfErrorTest, SuccessPathError) {
+  auto err = CallReturnIfError_SuccessError();
+  EXPECT_FALSE(err);
+}
+
+TEST(MacroReturnIfErrorTest, SuccessPathVoidResult) {
+  auto r = CallReturnIfError_SuccessVoidResult();
+  EXPECT_TRUE(r.ok());
+}
+
+TEST(MacroReturnIfErrorTest, FailureFromErrorFunc) {
+  auto err = CallReturnIfError_FailOnError();
+  EXPECT_TRUE(err);
+  EXPECT_EQ(err.message(), "error func");
+}
+
+TEST(MacroReturnIfErrorTest, FailureInVoidResultFunc) {
+  auto result = CallReturnIfError_FailOnVoidResult();
+  EXPECT_FALSE(result.ok());
+  EXPECT_EQ(result.error().message(), "error func");
+}
+
+// ======================================================================
+// ERRORS_ASSIGN_OR_RETURN tests
+// ======================================================================
+
+namespace {
+
+auto MakeIntResult(bool succeed) -> errors::Result<int> {
+  if (succeed) return 42;
+  return errors::New("int failed");
+}
+
+auto MakeStringResult(bool succeed) -> errors::Result<std::string> {
+  if (succeed) return std::string("hello");
+  return errors::New("string failed");
+}
+
+auto CallAssignOrReturn_Success() -> errors::Result<int> {
+  ERRORS_ASSIGN_OR_RETURN(auto val, MakeIntResult(true));
+  return val;
+}
+
+auto CallAssignOrReturn_Failure() -> errors::Result<int> {
+  ERRORS_ASSIGN_OR_RETURN(auto val, MakeIntResult(false));
+  return val;  // Should not reach here.
+}
+
+auto CallAssignOrReturn_ExistingVar() -> errors::Result<int> {
+  int x = 0;
+  ERRORS_ASSIGN_OR_RETURN(x, MakeIntResult(true));
+  return x;
+}
+
+auto CallAssignOrReturn_PreservesSentinel() -> errors::Result<int> {
+  auto failing = []() -> errors::Result<int> {
+    return errors::Error(kErrNotFound);
+  };
+  ERRORS_ASSIGN_OR_RETURN(auto val, failing());
+  return val;
+}
+
+}  // namespace
+
+TEST(MacroAssignOrReturnTest, SuccessPath) {
+  auto r = CallAssignOrReturn_Success();
+  EXPECT_TRUE(r.ok());
+  EXPECT_EQ(r.value(), 42);
+}
+
+TEST(MacroAssignOrReturnTest, FailurePath) {
+  auto r = CallAssignOrReturn_Failure();
+  EXPECT_FALSE(r.ok());
+  EXPECT_EQ(r.error().message(), "int failed");
+}
+
+TEST(MacroAssignOrReturnTest, ExistingVariable) {
+  auto r = CallAssignOrReturn_ExistingVar();
+  EXPECT_TRUE(r.ok());
+  EXPECT_EQ(r.value(), 42);
+}
+
+TEST(MacroAssignOrReturnTest, PreservesSentinelIdentity) {
+  auto r = CallAssignOrReturn_PreservesSentinel();
+  EXPECT_FALSE(r.ok());
+  EXPECT_TRUE(errors::Is(r.error(), kErrNotFound));
+}
+
+// ======================================================================
+// ERRORS_TRY tests (GCC/Clang only)
+// ======================================================================
+
+#if defined(__GNUC__)
+
+namespace {
+
+auto CallTry_Success() -> errors::Result<int> {
+  int val = ERRORS_TRY(MakeIntResult(true));
+  return val;
+}
+
+auto CallTry_Failure() -> errors::Result<int> {
+  int val = ERRORS_TRY(MakeIntResult(false));
+  return val;  // Should not reach here.
+}
+
+auto CallTry_InlineExpr() -> errors::Result<std::string> {
+  std::string result = ERRORS_TRY(MakeStringResult(true)) + " world";
+  return result;
+}
+
+}  // namespace
+
+TEST(MacroTryTest, SuccessPath) {
+  auto r = CallTry_Success();
+  EXPECT_TRUE(r.ok());
+  EXPECT_EQ(r.value(), 42);
+}
+
+TEST(MacroTryTest, FailurePath) {
+  auto r = CallTry_Failure();
+  EXPECT_FALSE(r.ok());
+  EXPECT_EQ(r.error().message(), "int failed");
+}
+
+TEST(MacroTryTest, InlineUsage) {
+  auto r = CallTry_InlineExpr();
+  EXPECT_TRUE(r.ok());
+  EXPECT_EQ(r.value(), "hello world");
+}
+
+#endif  // defined(__GNUC__)
+
+// ======================================================================
+// Existing tests continue below
+// ======================================================================
+
 TEST(ErrorTest, MessagePreallocation) {
   // Build a 50-layer chain and verify message() produces correct output.
   errors::Error err = errors::New("root");

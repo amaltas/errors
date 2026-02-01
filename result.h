@@ -158,4 +158,63 @@ class [[nodiscard]] Result {
 
 // NOLINTEND(cppcoreguidelines-pro-type-union-access)
 
+// Partial specialization for void — no value, just success/failure.
+// Size: 8 bytes (same as a bare Error). Nil Error = success.
+template <>
+class [[nodiscard]] Result<void> {
+ public:
+  Result() noexcept = default;  // Success (nil Error)
+  // NOLINTNEXTLINE(google-explicit-constructor, hicpp-explicit-conversions)
+  Result(Error err) : error_(std::move(err)) {  // Failure
+    assert(error_ && "Result<void> failure must hold a non-nil Error");
+  }
+
+  [[nodiscard]] auto ok() const noexcept -> bool { return !error_; }
+  [[nodiscard]] explicit operator bool() const noexcept { return !error_; }
+
+  [[nodiscard]] auto error() const& -> const Error& {
+    assert(error_ && "error() called on success Result<void>");
+    return error_;
+  }
+  [[nodiscard]] auto error() & -> Error& {
+    assert(error_ && "error() called on success Result<void>");
+    return error_;
+  }
+  [[nodiscard]] auto error() && -> Error&& {
+    assert(error_ && "error() called on success Result<void>");
+    return std::move(error_);
+  }
+
+ private:
+  Error error_;  // Nil = success, non-nil = failure
+};
+
 }  // namespace errors
+
+// Macro helpers for unique variable names.
+#define ERRORS_CONCAT_INNER_(x, y) ERRORS_CONCAT_EXPAND_(x, y)
+#define ERRORS_CONCAT_EXPAND_(x, y) x##y
+
+// Macro: ERRORS_ASSIGN_OR_RETURN(lhs, expr)
+// Evaluates `expr` (must yield a Result<T>). On success, assigns the value to
+// `lhs`; on failure, returns the error from the enclosing function.
+// `lhs` can be `auto val`, `auto& val`, or an existing variable name.
+// Note: the temporary leaks into the enclosing scope (same as absl's pattern).
+#define ERRORS_ASSIGN_OR_RETURN(lhs, expr)                                    \
+  auto ERRORS_CONCAT_INNER_(errors_result_, __LINE__) = (expr);               \
+  if (!ERRORS_CONCAT_INNER_(errors_result_, __LINE__).ok())                   \
+    return std::move(ERRORS_CONCAT_INNER_(errors_result_, __LINE__)).error();  \
+  lhs = std::move(ERRORS_CONCAT_INNER_(errors_result_, __LINE__)).value()
+
+// Macro: ERRORS_TRY(expr)  (GCC/Clang only — statement expression)
+// Evaluates `expr` (must yield a Result<T>). On success, evaluates to the
+// unwrapped value; on failure, returns the error from the enclosing function.
+// Can be used inline: `auto x = ERRORS_TRY(Foo());`
+#if defined(__GNUC__)
+#define ERRORS_TRY(expr)                                                 \
+  ({                                                                     \
+    auto&& _result_ = (expr);                                            \
+    if (!_result_.ok()) return std::move(_result_).error();              \
+    std::move(_result_).value();                                         \
+  })
+#endif
